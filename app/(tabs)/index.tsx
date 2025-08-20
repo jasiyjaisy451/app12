@@ -1,6 +1,7 @@
 import { AppLogo } from '@/components/AppLogo';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { PrayerTimesCard } from '@/components/PrayerTimesCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { BookOpen, Award, Users, TrendingUp, Calendar, Star, Trophy, Clock, Target, CirclePlus as PlusCircle, Heart, CircleCheck as CheckCircle, Gift, ExternalLink, CircleX, Camera, FileText, Settings, ChartBar as BarChart3, MapPin, User } from 'lucide-react-native';
@@ -9,7 +10,6 @@ import { Dimensions, FlatList, Image, Pressable, RefreshControl, ScrollView, Sty
 import Animated, { FadeInDown, FadeInUp, SlideInRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import dayjs from 'dayjs';
 
 const { width } = Dimensions.get('window');
 
@@ -29,14 +29,6 @@ interface DashboardStats {
     absentToday: number;
     excusedToday: number;
   };
-}
-
-interface PrayerTimes {
-  fajr: string;
-  dhuhr: string;
-  asr: string;
-  maghrib: string;
-  isha: string;
 }
 
 const banners = [
@@ -67,9 +59,6 @@ const banners = [
 ];
 
 export default function HomeScreen() {
-  const [prayerTimes, setPrayerTimes] = useState<PrayerTimes | null>(null);
-  const [locationName, setLocationName] = useState('');
-  const [nextPrayer, setNextPrayer] = useState<{ name: string; time: string; timeLeft: string } | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const router = useRouter();
@@ -94,59 +83,6 @@ export default function HomeScreen() {
     setCurrentIndex(index);
   };
 
-  const getPrayerTimes = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
-
-      const loc = await Location.getCurrentPositionAsync({});
-      const { latitude, longitude } = loc.coords;
-
-      const [address] = await Location.reverseGeocodeAsync({ latitude, longitude });
-      const city = address.city || address.region || 'Lokasi Anda';
-      setLocationName(city);
-
-      const response = await fetch(
-        `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=2`
-      );
-      const data = await response.json();
-
-      if (data.data) {
-        const prayers = {
-          fajr: data.data.timings.Fajr,
-          dhuhr: data.data.timings.Dhuhr,
-          asr: data.data.timings.Asr,
-          maghrib: data.data.timings.Maghrib,
-          isha: data.data.timings.Isha,
-        };
-        setPrayerTimes(prayers);
-        
-        const now = dayjs();
-        const prayerList = [
-          { name: 'Subuh', time: prayers.fajr },
-          { name: 'Dzuhur', time: prayers.dhuhr },
-          { name: 'Ashar', time: prayers.asr },
-          { name: 'Maghrib', time: prayers.maghrib },
-          { name: 'Isya', time: prayers.isha },
-        ];
-
-        for (let prayer of prayerList) {
-          const prayerTime = dayjs(prayer.time, 'HH:mm');
-          if (now.isBefore(prayerTime)) {
-            setNextPrayer({
-              name: prayer.name,
-              time: prayer.time,
-              timeLeft: prayerTime.from(now, true),
-            });
-            break;
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error getting prayer times:', error);
-    }
-  };
-
   const fetchDashboardData = async () => {
     if (!profile) return;
 
@@ -165,7 +101,6 @@ export default function HomeScreen() {
           await fetchAdminStats();
           break;
       }
-      await getPrayerTimes();
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -380,8 +315,8 @@ export default function HomeScreen() {
       }
       showsVerticalScrollIndicator={false}
     >
-      {/* Enhanced Header */}
-      <Animated.View entering={FadeInUp}>
+      {/* Enhanced Header Card */}
+      <Animated.View entering={FadeInUp} style={styles.headerCard}>
         <LinearGradient
           colors={['#1E40AF', '#3B82F6', '#60A5FA']}
           style={styles.headerGradient}
@@ -415,73 +350,8 @@ export default function HomeScreen() {
       </Animated.View>
 
       <View style={styles.content}>
-        {/* Prayer Times Card - Enhanced Single Row */}
-        {prayerTimes && (
-          <Animated.View entering={FadeInUp.delay(150)} style={styles.prayerCard}>
-            <LinearGradient
-              colors={['#059669', '#10B981']}
-              style={styles.prayerGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
-              <View style={styles.prayerHeader}>
-                <View style={styles.prayerTitleContainer}>
-                  <Clock size={20} color="white" />
-                  <Text style={styles.prayerTitle}>Jadwal Sholat</Text>
-                </View>
-                <View style={styles.locationContainer}>
-                  <MapPin size={16} color="white" />
-                  <Text style={styles.locationText}>{locationName}</Text>
-                </View>
-              </View>
-              
-              {nextPrayer && (
-                <View style={styles.nextPrayerBanner}>
-                  <Text style={styles.nextPrayerLabel}>Sholat Berikutnya:</Text>
-                  <Text style={styles.nextPrayerName}>{nextPrayer.name} - {nextPrayer.time}</Text>
-                </View>
-              )}
-
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.prayerTimesScroll}
-              >
-                {Object.entries({
-                  'Subuh': prayerTimes?.fajr,
-                  'Dzuhur': prayerTimes?.dhuhr,
-                  'Ashar': prayerTimes?.asr,
-                  'Maghrib': prayerTimes?.maghrib,
-                  'Isya': prayerTimes?.isha,
-                }).map(([name, time], index) => {
-                  const isNext = nextPrayer?.name === name;
-                  return (
-                    <View 
-                      key={name} 
-                      style={[
-                        styles.prayerTimeItem,
-                        isNext && styles.prayerTimeItemActive
-                      ]}
-                    >
-                      <Text style={[
-                        styles.prayerName,
-                        isNext && styles.prayerNameActive
-                      ]}>
-                        {name}
-                      </Text>
-                      <Text style={[
-                        styles.prayerTime,
-                        isNext && styles.prayerTimeActive
-                      ]}>
-                        {time}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </ScrollView>
-            </LinearGradient>
-          </Animated.View>
-        )}
+        {/* Prayer Times Card */}
+        <PrayerTimesCard />
 
         {/* Enhanced Stats Cards */}
         <Animated.View entering={FadeInUp.delay(200)} style={styles.statsContainer}>
@@ -750,25 +620,29 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F1F5F9',
+  },
+  headerCard: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 20,
+    borderRadius: 24,
+    overflow: 'hidden',
+    shadowColor: '#1E40AF',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 15,
   },
   headerGradient: {
-    paddingBottom: 32,
+    paddingBottom: 24,
     paddingHorizontal: 24,
-    borderBottomLeftRadius: 32,
-    borderBottomRightRadius: 32,
-    shadowColor: '#1E40AF',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 10,
   },
   headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingTop: 10,
-    
   },
   headerLeft: {
     flexDirection: 'row',
@@ -818,97 +692,6 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
   },
-  prayerCard: {
-    marginBottom: 24,
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  prayerGradient: {
-    padding: 20,
-  },
-  prayerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  prayerTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  prayerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  locationContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  locationText: {
-    fontSize: 14,
-    color: 'white',
-    opacity: 0.9,
-  },
-  nextPrayerBanner: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-  },
-  nextPrayerLabel: {
-    fontSize: 12,
-    color: 'white',
-    opacity: 0.8,
-    marginBottom: 4,
-  },
-  nextPrayerName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  prayerTimesScroll: {
-    marginHorizontal: -8,
-  },
-  prayerTimeItem: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    padding: 12,
-    marginHorizontal: 4,
-    minWidth: 80,
-    alignItems: 'center',
-  },
-  prayerTimeItemActive: {
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    borderWidth: 2,
-    borderColor: 'white',
-  },
-  prayerName: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: 'white',
-    opacity: 0.8,
-    marginBottom: 4,
-  },
-  prayerNameActive: {
-    opacity: 1,
-    fontWeight: 'bold',
-  },
-  prayerTime: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  prayerTimeActive: {
-    fontSize: 16,
-  },
   statsContainer: {
     flexDirection: 'row',
     gap: 12,
@@ -917,14 +700,14 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     backgroundColor: 'white',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
+    shadowRadius: 16,
+    elevation: 8,
     borderLeftWidth: 4,
   },
   statNumber: {
@@ -948,14 +731,14 @@ const styles = StyleSheet.create({
   },
   progressCard: {
     flex: 1,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
     alignItems: 'center',
     gap: 8,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
     elevation: 8,
   },
   progressTitle: {
@@ -986,15 +769,15 @@ const styles = StyleSheet.create({
   attendanceCard: {
     flex: 1,
     backgroundColor: 'white',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     alignItems: 'center',
     gap: 8,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
     borderLeftWidth: 4,
   },
   attendanceNumber: {
@@ -1009,12 +792,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   viewAllAttendanceButton: {
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#3B82F6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
     elevation: 6,
   },
   viewAllAttendanceGradient: {
@@ -1035,12 +818,12 @@ const styles = StyleSheet.create({
   bannerCard: {
     width: width * 0.85,
     marginRight: 16,
-    borderRadius: 20,
+    borderRadius: 24,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
     elevation: 10,
   },
   bannerGradient: {
@@ -1118,13 +901,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   activityCard: {
-    borderRadius: 16,
+    borderRadius: 20,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
   },
   activityGradient: {
     flexDirection: 'row',
@@ -1166,14 +949,14 @@ const styles = StyleSheet.create({
   },
   emptyActivity: {
     backgroundColor: 'white',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 40,
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 4,
   },
   emptyActivityText: {
     fontSize: 16,
@@ -1182,13 +965,13 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   quoteCard: {
-    borderRadius: 20,
+    borderRadius: 24,
     overflow: 'hidden',
     marginBottom: 20,
     shadowColor: '#F59E0B',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
     elevation: 10,
   },
   quoteGradient: {
