@@ -318,7 +318,7 @@ export default function HomeScreen() {
       {/* Enhanced Header Card */}
       <Animated.View entering={FadeInUp} style={styles.headerCard}>
         <LinearGradient
-          colors={['#1E40AF', '#3B82F6', '#60A5FA']}
+          colors={['#F1F5F9', '#F1F5F9', '#F1F5F9']}
           style={styles.headerGradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
@@ -628,11 +628,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderRadius: 24,
     overflow: 'hidden',
-    shadowColor: '#1E40AF',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 15,
   },
   headerGradient: {
     paddingBottom: 24,
@@ -672,19 +667,19 @@ const styles = StyleSheet.create({
   },
   greeting: {
     fontSize: 16,
-    color: 'white',
+    color: 'black',
     opacity: 0.9,
     fontWeight: '500',
   },
   userName: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: 'white',
+    color: 'black',
     marginTop: 4,
   },
   userRole: {
     fontSize: 14,
-    color: 'white',
+    color: 'black',
     opacity: 0.8,
     marginTop: 2,
     fontWeight: '500',
