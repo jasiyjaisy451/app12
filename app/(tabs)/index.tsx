@@ -1,7 +1,6 @@
 import { AppLogo } from '@/components/AppLogo';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-import { PrayerTimesCard } from '@/components/PrayerTimesCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { BookOpen, Award, Users, TrendingUp, Calendar, Star, Trophy, Clock, Target, CirclePlus as PlusCircle, Heart, CircleCheck as CheckCircle, Gift, ExternalLink, CircleX, Camera, FileText, Settings, ChartBar as BarChart3, MapPin, User } from 'lucide-react-native';
@@ -9,9 +8,14 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Dimensions, FlatList, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, TouchableOpacity, Linking } from 'react-native';
 import Animated, { FadeInDown, FadeInUp, SlideInRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
+import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
 
-const { width } = Dimensions.get('window');
+dayjs.extend(relativeTime);
+
+const { width, height } = Dimensions.get('window');
 
 interface DashboardStats {
   totalSetoran?: number;
@@ -29,6 +33,14 @@ interface DashboardStats {
     absentToday: number;
     excusedToday: number;
   };
+}
+
+interface PrayerTimes {
+  fajr: string;
+  dhuhr: string;
+  asr: string;
+  maghrib: string;
+  isha: string;
 }
 
 const banners = [
@@ -65,6 +77,10 @@ export default function HomeScreen() {
   const { profile } = useAuth();
   const insets = useSafeAreaInsets();
   const [stats, setStats] = useState<DashboardStats>({});
+  const [prayerTimes, setPrayerTimes] = useState<PrayerTimes | null>(null);
+  const [locationName, setLocationName] = useState('');
+  const [nextPrayer, setNextPrayer] = useState<{ name: string; time: string; timeLeft: string } | null>(null);
+  const [currentTime, setCurrentTime] = useState(dayjs());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -78,9 +94,79 @@ export default function HomeScreen() {
     return () => clearInterval(interval);
   }, [currentIndex, banners.length]);
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(dayjs());
+    }, 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const handleScroll = (event: any) => {
     const index = Math.round(event.nativeEvent.contentOffset.x / (width * 0.85));
     setCurrentIndex(index);
+  };
+
+  const getPrayerTimes = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+
+      const loc = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = loc.coords;
+
+      const [address] = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const city = address.city || address.region || 'Lokasi Anda';
+      setLocationName(city);
+
+      const response = await fetch(
+        `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=2`
+      );
+      const data = await response.json();
+
+      if (data.data) {
+        const prayers = {
+          fajr: data.data.timings.Fajr,
+          dhuhr: data.data.timings.Dhuhr,
+          asr: data.data.timings.Asr,
+          maghrib: data.data.timings.Maghrib,
+          isha: data.data.timings.Isha,
+        };
+        setPrayerTimes(prayers);
+        
+        const now = currentTime;
+        const prayerList = [
+          { name: 'Subuh', time: prayers.fajr },
+          { name: 'Dzuhur', time: prayers.dhuhr },
+          { name: 'Ashar', time: prayers.asr },
+          { name: 'Maghrib', time: prayers.maghrib },
+          { name: 'Isya', time: prayers.isha },
+        ];
+
+        for (let prayer of prayerList) {
+          const prayerTime = dayjs(prayer.time, 'HH:mm');
+          if (now.isBefore(prayerTime)) {
+            setNextPrayer({
+              name: prayer.name,
+              time: prayer.time,
+              timeLeft: prayerTime.from(now, true),
+            });
+            break;
+          }
+        }
+
+        // If all prayers passed, next is tomorrow's Fajr
+        if (!nextPrayer) {
+          const tomorrowFajr = dayjs(prayers.fajr, 'HH:mm').add(1, 'day');
+          setNextPrayer({
+            name: 'Subuh',
+            time: prayers.fajr,
+            timeLeft: tomorrowFajr.from(now, true),
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error getting prayer times:', error);
+    }
   };
 
   const fetchDashboardData = async () => {
@@ -278,11 +364,46 @@ export default function HomeScreen() {
 
   useEffect(() => {
     fetchDashboardData();
+    getPrayerTimes();
   }, [profile]);
+
+  useEffect(() => {
+    if (prayerTimes) {
+      const now = currentTime;
+      const prayerList = [
+        { name: 'Subuh', time: prayerTimes.fajr },
+        { name: 'Dzuhur', time: prayerTimes.dhuhr },
+        { name: 'Ashar', time: prayerTimes.asr },
+        { name: 'Maghrib', time: prayerTimes.maghrib },
+        { name: 'Isya', time: prayerTimes.isha },
+      ];
+
+      for (let prayer of prayerList) {
+        const prayerTime = dayjs(prayer.time, 'HH:mm');
+        if (now.isBefore(prayerTime)) {
+          setNextPrayer({
+            name: prayer.name,
+            time: prayer.time,
+            timeLeft: prayerTime.from(now, true),
+          });
+          return;
+        }
+      }
+
+      // If all prayers passed, next is tomorrow's Fajr
+      const tomorrowFajr = dayjs(prayerTimes.fajr, 'HH:mm').add(1, 'day');
+      setNextPrayer({
+        name: 'Subuh',
+        time: prayerTimes.fajr,
+        timeLeft: tomorrowFajr.from(now, true),
+      });
+    }
+  }, [currentTime, prayerTimes]);
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchDashboardData();
+    getPrayerTimes();
   };
 
   const getGreeting = () => {
@@ -307,259 +428,328 @@ export default function HomeScreen() {
     Linking.openURL(link);
   };
 
+  const handleLogoPress = () => {
+    router.push('/(tabs)/profile');
+  };
+
   return (
-    <ScrollView 
-      style={[styles.container, { paddingTop: insets.top }]}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Enhanced Header Card */}
-      <Animated.View entering={FadeInUp} style={styles.headerCard}>
-        <LinearGradient
-          colors={['#F1F5F9', '#F1F5F9', '#F1F5F9']}
-          style={styles.headerGradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+    <View style={styles.container}>
+      {/* Background with Gradient to White Transition */}
+      <LinearGradient
+        colors={['#10B981', '#FBBF24', 'rgba(255,255,255,0.8)', 'white']}
+        style={styles.backgroundGradient}
+        locations={[0, 0.4, 0.7, 1]}
+      />
+
+      <ScrollView 
+        style={styles.scrollContainer}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header Section */}
+        <Animated.View 
+          entering={FadeInUp} 
+          style={[styles.headerSection, { paddingTop: insets.top + 20 }]}
         >
-          <View style={styles.headerContent}>
-            <View style={styles.headerLeft}>
-              <AppLogo size="small" showText={false} />
-              <View style={styles.greetingContainer}>
-                <Text style={styles.greeting}>{getGreeting()}</Text>
-                <Text style={styles.userName}>{profile?.name}</Text>
-                <Text style={styles.userRole}>{getRoleName(profile?.role || '')}</Text>
-              </View>
-            </View>
-            <Pressable 
-              style={styles.profileButton}
-              onPress={() => router.push('/(tabs)/profile')}
-            >
-              <LinearGradient
-                colors={['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
-                style={styles.profilePicture}
-              >
-                <Text style={styles.profileInitial}>
-                  {profile?.name?.charAt(0).toUpperCase()}
-                </Text>
-              </LinearGradient>
-            </Pressable>
-          </View>
-        </LinearGradient>
-      </Animated.View>
-
-      <View style={styles.content}>
-        {/* Prayer Times Card */}
-        <PrayerTimesCard />
-
-        {/* Enhanced Stats Cards */}
-        <Animated.View entering={FadeInUp.delay(200)} style={styles.statsContainer}>
-          {profile?.role === 'siswa' && (
-            <>
-              <View style={[styles.statCard, { borderLeftColor: '#3B82F6' }]}>
-                <TrendingUp size={24} color="#3B82F6" />
-                <Text style={styles.statNumber}>{stats.totalPoin || 0}</Text>
-                <Text style={styles.statLabel}>Total Poin</Text>
-              </View>
-              <View style={[styles.statCard, { borderLeftColor: '#10B981' }]}>
-                <BookOpen size={24} color="#10B981" />
-                <Text style={styles.statNumber}>{stats.setoranDiterima || 0}</Text>
-                <Text style={styles.statLabel}>Diterima</Text>
-              </View>
-              <View style={[styles.statCard, { borderLeftColor: '#F59E0B' }]}>
-                <Award size={24} color="#F59E0B" />
-                <Text style={styles.statNumber}>{stats.labelCount || 0}</Text>
-                <Text style={styles.statLabel}>Label Juz</Text>
-              </View>
-            </>
-          )}
+          <Pressable onPress={handleLogoPress} style={styles.logoContainer}>
+            <AppLogo size="medium" showText={false} animated={true} />
+          </Pressable>
           
-          {profile?.role === 'guru' && (
-            <>
-              <View style={[styles.statCard, { borderLeftColor: '#EF4444' }]}>
-                <Clock size={24} color="#EF4444" />
-                <Text style={styles.statNumber}>{stats.setoranPending || 0}</Text>
-                <Text style={styles.statLabel}>Perlu Dinilai</Text>
-              </View>
-              <View style={[styles.statCard, { borderLeftColor: '#3B82F6' }]}>
-                <Users size={24} color="#3B82F6" />
-                <Text style={styles.statNumber}>{stats.totalSiswa || 0}</Text>
-                <Text style={styles.statLabel}>Total Santri</Text>
-              </View>
-              <View style={[styles.statCard, { borderLeftColor: '#10B981' }]}>
-                <Award size={24} color="#10B981" />
-                <Text style={styles.statNumber}>1</Text>
-                <Text style={styles.statLabel}>Kelas Aktif</Text>
-              </View>
-            </>
-          )}
-
-          {profile?.role === 'ortu' && (
-            <>
-              <View style={[styles.statCard, { borderLeftColor: '#3B82F6' }]}>
-                <TrendingUp size={24} color="#3B82F6" />
-                <Text style={styles.statNumber}>{stats.totalPoin || 0}</Text>
-                <Text style={styles.statLabel}>Poin Anak</Text>
-              </View>
-              <View style={[styles.statCard, { borderLeftColor: '#10B981' }]}>
-                <BookOpen size={24} color="#10B981" />
-                <Text style={styles.statNumber}>{stats.setoranDiterima || 0}</Text>
-                <Text style={styles.statLabel}>Diterima</Text>
-              </View>
-              <View style={[styles.statCard, { borderLeftColor: '#F59E0B' }]}>
-                <Clock size={24} color="#F59E0B" />
-                <Text style={styles.statNumber}>{stats.setoranPending || 0}</Text>
-                <Text style={styles.statLabel}>Menunggu</Text>
-              </View>
-            </>
-          )}
-        </Animated.View>
-
-        {/* Progress Cards for Students */}
-        {profile?.role === 'siswa' && (
-          <Animated.View entering={FadeInUp.delay(400)} style={styles.progressSection}>
-            <Text style={styles.sectionTitle}>Progress Pembelajaran</Text>
-            <View style={styles.progressCards}>
-              <LinearGradient
-                colors={['#10B981', '#059669']}
-                style={styles.progressCard}
-              >
-                <BookOpen size={24} color="white" />
-                <Text style={styles.progressTitle}>Hafalan</Text>
-                <Text style={styles.progressNumber}>{stats.hafalanProgress || 0}</Text>
-                <Text style={styles.progressLabel}>Setoran Diterima</Text>
-              </LinearGradient>
-              <LinearGradient
-                colors={['#3B82F6', '#2563EB']}
-                style={styles.progressCard}
-              >
-                <Target size={24} color="white" />
-                <Text style={styles.progressTitle}>Murojaah</Text>
-                <Text style={styles.progressNumber}>{stats.murojaahProgress || 0}</Text>
-                <Text style={styles.progressLabel}>Setoran Diterima</Text>
-              </LinearGradient>
-            </View>
-          </Animated.View>
-        )}
-
-        {/* Attendance Summary for Guru/Ortu */}
-        {(profile?.role === 'guru' || profile?.role === 'ortu') && stats.attendanceStats && (
-          <Animated.View entering={FadeInUp.delay(250)} style={styles.attendanceSection}>
-            <Text style={styles.sectionTitle}>Absensi Hari Ini</Text>
-            <View style={styles.attendanceCards}>
-              <View style={[styles.attendanceCard, { borderLeftColor: '#3B82F6' }]}>
-                <Users size={20} color="#3B82F6" />
-                <Text style={styles.attendanceNumber}>{stats.attendanceStats.totalStudents}</Text>
-                <Text style={styles.attendanceLabel}>Total Siswa</Text>
-              </View>
-              <View style={[styles.attendanceCard, { borderLeftColor: '#10B981' }]}>
-                <CheckCircle size={20} color="#10B981" />
-                <Text style={styles.attendanceNumber}>{stats.attendanceStats.presentToday}</Text>
-                <Text style={styles.attendanceLabel}>Hadir</Text>
-              </View>
-              <View style={[styles.attendanceCard, { borderLeftColor: '#F59E0B' }]}>
-                <Clock size={20} color="#F59E0B" />
-                <Text style={styles.attendanceNumber}>{stats.attendanceStats.excusedToday}</Text>
-                <Text style={styles.attendanceLabel}>Izin</Text>
-              </View>
-              <View style={[styles.attendanceCard, { borderLeftColor: '#EF4444' }]}>
-                <CircleX size={20} color="#EF4444" />
-                <Text style={styles.attendanceNumber}>{stats.attendanceStats.absentToday}</Text>
-                <Text style={styles.attendanceLabel}>Alpa</Text>
-              </View>
-            </View>
-            
-            <Pressable 
-              style={styles.viewAllAttendanceButton}
-              onPress={() => router.push('/(tabs)/absensi')}
-            >
-              <LinearGradient
-                colors={['#3B82F6', '#2563EB']}
-                style={styles.viewAllAttendanceGradient}
-              >
-                <Text style={styles.viewAllAttendanceText}>Lihat Detail Absensi</Text>
-                <ExternalLink size={16} color="white" />
-              </LinearGradient>
-            </Pressable>
-          </Animated.View>
-        )}
-
-        {/* Enhanced Banner Ads */}
-        <Animated.View entering={FadeInUp.delay(300)} style={styles.bannerSection}>
-          <Text style={styles.sectionTitle}>Program Kebaikan</Text>
-          <FlatList
-            ref={flatListRef}
-            data={banners}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            snapToInterval={width * 0.85}
-            decelerationRate="fast"
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            renderItem={({ item }) => (
-              <Pressable 
-                onPress={() => handleBannerPress(item.link)} 
-                style={styles.bannerCard}
-              >
-                <LinearGradient
-                  colors={item.gradient}
-                  style={styles.bannerGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <View style={styles.bannerContent}>
-                    <View style={styles.bannerTextContainer}>
-                      <Text style={styles.bannerTitle}>{item.title}</Text>
-                      <Text style={styles.bannerSubtitle}>{item.subtitle}</Text>
-                      <View style={styles.bannerButton}>
-                        <Text style={styles.bannerButtonText}>Donasi Sekarang</Text>
-                        <ExternalLink size={14} color="white" />
-                      </View>
-                    </View>
-                    <View style={styles.bannerImageContainer}>
-                      <Image source={{ uri: item.image }} style={styles.bannerImage} />
-                    </View>
-                  </View>
-                </LinearGradient>
-              </Pressable>
-            )}
-          />
-
-          <View style={styles.dotsContainer}>
-            {banners.map((_, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.dot,
-                  { 
-                    backgroundColor: index === currentIndex ? '#3B82F6' : '#CBD5E1',
-                    width: index === currentIndex ? 24 : 8
-                  },
-                ]}
-              />
-            ))}
+          <View style={styles.userInfo}>
+            <Text style={styles.greeting}>{getGreeting()}</Text>
+            <Text style={styles.userName}>{profile?.name}</Text>
+            <Text style={styles.userRole}>{getRoleName(profile?.role || '')}</Text>
           </View>
+
+          <Text style={styles.currentTime}>
+            {currentTime.format('HH:mm')} WIB
+          </Text>
         </Animated.View>
 
-        {/* Recent Activity */}
-        <Animated.View entering={FadeInUp.delay(500)} style={styles.section}>
-          <Text style={styles.sectionTitle}>Aktivitas Terbaru</Text>
-          {stats.recentActivity && stats.recentActivity.length > 0 ? (
-            <View style={styles.activityList}>
-              {stats.recentActivity.map((activity, index) => (
-                <Animated.View 
-                  key={activity.id || index} 
-                  entering={SlideInRight.delay(index * 100)}
-                  style={styles.activityCard}
+        {/* Blur Transition Effect */}
+        <View style={styles.blurTransition}>
+          <BlurView intensity={20} style={styles.blurView} />
+        </View>
+
+        {/* Main Content Area (White Background) */}
+        <View style={styles.whiteContentArea}>
+          {/* Floating Prayer Times Card */}
+          {prayerTimes && (
+            <Animated.View entering={FadeInUp.delay(200)} style={styles.floatingPrayerCard}>
+              <View style={styles.prayerCardHeader}>
+                <View style={styles.prayerHeaderLeft}>
+                  <Clock size={24} color="#10B981" />
+                  <Text style={styles.prayerCardTitle}>Jadwal Sholat Hari Ini</Text>
+                </View>
+                <View style={styles.locationBadge}>
+                  <MapPin size={14} color="#6B7280" />
+                  <Text style={styles.locationText}>{locationName}</Text>
+                </View>
+              </View>
+
+              {nextPrayer && (
+                <View style={styles.nextPrayerBanner}>
+                  <Text style={styles.nextPrayerLabel}>Sholat Berikutnya:</Text>
+                  <Text style={styles.nextPrayerInfo}>
+                    {nextPrayer.name} - {nextPrayer.time}
+                  </Text>
+                  <Text style={styles.nextPrayerCountdown}>
+                    dalam {nextPrayer.timeLeft}
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.prayerTimesList}>
+                {Object.entries({
+                  'Subuh': prayerTimes.fajr,
+                  'Dzuhur': prayerTimes.dhuhr,
+                  'Ashar': prayerTimes.asr,
+                  'Maghrib': prayerTimes.maghrib,
+                  'Isya': prayerTimes.isha,
+                }).map(([name, time]) => {
+                  const isNext = nextPrayer?.name === name;
+                  return (
+                    <View 
+                      key={name} 
+                      style={[
+                        styles.prayerTimeItem,
+                        isNext && styles.prayerTimeItemActive
+                      ]}
+                    >
+                      <Text style={[
+                        styles.prayerName,
+                        isNext && styles.prayerNameActive
+                      ]}>
+                        {name}
+                      </Text>
+                      <Text style={[
+                        styles.prayerTime,
+                        isNext && styles.prayerTimeActive
+                      ]}>
+                        {time}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            </Animated.View>
+          )}
+
+          {/* Unified Stats Section */}
+          <Animated.View entering={FadeInUp.delay(300)} style={styles.unifiedStatsSection}>
+            <Text style={styles.sectionTitle}>Ringkasan Aktivitas</Text>
+            
+            <View style={styles.statsGrid}>
+              {profile?.role === 'siswa' && (
+                <>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#3B82F6', '#2563EB']}
+                      style={styles.statGradient}
+                    >
+                      <TrendingUp size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.totalPoin || 0}</Text>
+                      <Text style={styles.statLabel}>Total Poin</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#10B981', '#059669']}
+                      style={styles.statGradient}
+                    >
+                      <BookOpen size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.setoranDiterima || 0}</Text>
+                      <Text style={styles.statLabel}>Diterima</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#F59E0B', '#D97706']}
+                      style={styles.statGradient}
+                    >
+                      <Award size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.labelCount || 0}</Text>
+                      <Text style={styles.statLabel}>Label Juz</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#EF4444', '#DC2626']}
+                      style={styles.statGradient}
+                    >
+                      <Clock size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.setoranPending || 0}</Text>
+                      <Text style={styles.statLabel}>Menunggu</Text>
+                    </LinearGradient>
+                  </View>
+                </>
+              )}
+              
+              {profile?.role === 'guru' && (
+                <>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#EF4444', '#DC2626']}
+                      style={styles.statGradient}
+                    >
+                      <Clock size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.setoranPending || 0}</Text>
+                      <Text style={styles.statLabel}>Perlu Dinilai</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#3B82F6', '#2563EB']}
+                      style={styles.statGradient}
+                    >
+                      <Users size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.totalSiswa || 0}</Text>
+                      <Text style={styles.statLabel}>Total Santri</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#10B981', '#059669']}
+                      style={styles.statGradient}
+                    >
+                      <Award size={24} color="white" />
+                      <Text style={styles.statNumber}>1</Text>
+                      <Text style={styles.statLabel}>Kelas Aktif</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#8B5CF6', '#7C3AED']}
+                      style={styles.statGradient}
+                    >
+                      <CheckCircle size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.attendanceStats?.presentToday || 0}</Text>
+                      <Text style={styles.statLabel}>Hadir Hari Ini</Text>
+                    </LinearGradient>
+                  </View>
+                </>
+              )}
+
+              {profile?.role === 'ortu' && (
+                <>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#3B82F6', '#2563EB']}
+                      style={styles.statGradient}
+                    >
+                      <TrendingUp size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.totalPoin || 0}</Text>
+                      <Text style={styles.statLabel}>Poin Anak</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#10B981', '#059669']}
+                      style={styles.statGradient}
+                    >
+                      <BookOpen size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.setoranDiterima || 0}</Text>
+                      <Text style={styles.statLabel}>Diterima</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#F59E0B', '#D97706']}
+                      style={styles.statGradient}
+                    >
+                      <Clock size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.setoranPending || 0}</Text>
+                      <Text style={styles.statLabel}>Menunggu</Text>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.statCard}>
+                    <LinearGradient
+                      colors={['#8B5CF6', '#7C3AED']}
+                      style={styles.statGradient}
+                    >
+                      <CheckCircle size={24} color="white" />
+                      <Text style={styles.statNumber}>{stats.attendanceStats?.presentToday || 0}</Text>
+                      <Text style={styles.statLabel}>Kehadiran</Text>
+                    </LinearGradient>
+                  </View>
+                </>
+              )}
+            </View>
+          </Animated.View>
+
+          {/* Program Kebaikan Section */}
+          <Animated.View entering={FadeInUp.delay(400)} style={styles.bannerSection}>
+            <Text style={styles.sectionTitle}>Program Kebaikan</Text>
+            <FlatList
+              ref={flatListRef}
+              data={banners}
+              keyExtractor={(item) => item.id}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={width * 0.85}
+              decelerationRate="fast"
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              renderItem={({ item }) => (
+                <Pressable 
+                  onPress={() => handleBannerPress(item.link)} 
+                  style={styles.bannerCard}
                 >
                   <LinearGradient
-                    colors={['#F8FAFC', '#F1F5F9']}
-                    style={styles.activityGradient}
+                    colors={item.gradient}
+                    style={styles.bannerGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  >
+                    <View style={styles.bannerContent}>
+                      <View style={styles.bannerTextContainer}>
+                        <Text style={styles.bannerTitle}>{item.title}</Text>
+                        <Text style={styles.bannerSubtitle}>{item.subtitle}</Text>
+                        <View style={styles.bannerButton}>
+                          <Text style={styles.bannerButtonText}>Donasi Sekarang</Text>
+                          <ExternalLink size={14} color="white" />
+                        </View>
+                      </View>
+                      <View style={styles.bannerImageContainer}>
+                        <Image source={{ uri: item.image }} style={styles.bannerImage} />
+                      </View>
+                    </View>
+                  </LinearGradient>
+                </Pressable>
+              )}
+            />
+
+            <View style={styles.dotsContainer}>
+              {banners.map((_, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.dot,
+                    { 
+                      backgroundColor: index === currentIndex ? '#10B981' : '#CBD5E1',
+                      width: index === currentIndex ? 24 : 8
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+          </Animated.View>
+
+          {/* Recent Activity */}
+          <Animated.View entering={FadeInUp.delay(500)} style={styles.activitySection}>
+            <Text style={styles.sectionTitle}>Aktivitas Terbaru</Text>
+            {stats.recentActivity && stats.recentActivity.length > 0 ? (
+              <View style={styles.activityList}>
+                {stats.recentActivity.map((activity, index) => (
+                  <Animated.View 
+                    key={activity.id || index} 
+                    entering={SlideInRight.delay(index * 100)}
+                    style={styles.activityCard}
                   >
                     <View style={styles.activityIcon}>
-                      <BookOpen size={20} color="#3B82F6" />
+                      <BookOpen size={20} color="#10B981" />
                     </View>
                     <View style={styles.activityInfo}>
                       <Text style={styles.activityTitle}>
@@ -586,229 +776,259 @@ export default function HomeScreen() {
                          activity.status === 'diterima' ? 'Diterima' : 'Ditolak'}
                       </Text>
                     </View>
-                  </LinearGradient>
-                </Animated.View>
-              ))}
-            </View>
-          ) : (
-            <View style={styles.emptyActivity}>
-              <Calendar size={48} color="#94A3B8" />
-              <Text style={styles.emptyActivityText}>Belum ada aktivitas</Text>
-            </View>
-          )}
-        </Animated.View>
+                  </Animated.View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyActivity}>
+                <Calendar size={48} color="#94A3B8" />
+                <Text style={styles.emptyActivityText}>Belum ada aktivitas</Text>
+              </View>
+            )}
+          </Animated.View>
 
-        {/* Today's Quote */}
-        <Animated.View entering={FadeInUp.delay(600)} style={styles.quoteCard}>
-          <LinearGradient
-            colors={['#F59E0B', '#F97316']}
-            style={styles.quoteGradient}
-          >
-            <Star size={24} color="white" />
-            <Text style={styles.quoteText}>
-              "Dan sungguhnya telah Kami mudahkan Al-Quran untuk pelajaran, 
-              maka adakah orang yang mengambil pelajaran?"
-            </Text>
-            <Text style={styles.quoteSource}>- QS. Al-Qamar: 17</Text>
-          </LinearGradient>
-        </Animated.View>
-      </View>
-    </ScrollView>
+          {/* Today's Quote */}
+          <Animated.View entering={FadeInUp.delay(600)} style={styles.quoteCard}>
+            <LinearGradient
+              colors={['#F59E0B', '#F97316']}
+              style={styles.quoteGradient}
+            >
+              <Star size={24} color="white" />
+              <Text style={styles.quoteText}>
+                "Dan sungguhnya telah Kami mudahkan Al-Quran untuk pelajaran, 
+                maka adakah orang yang mengambil pelajaran?"
+              </Text>
+              <Text style={styles.quoteSource}>- QS. Al-Qamar: 17</Text>
+            </LinearGradient>
+          </Animated.View>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F1F5F9',
   },
-  headerCard: {
-    marginHorizontal: 20,
-    marginTop: 10,
-    marginBottom: 20,
-    borderRadius: 24,
-    overflow: 'hidden',
+  backgroundGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
-  headerGradient: {
-    paddingBottom: 24,
+  scrollContainer: {
+    flex: 1,
+  },
+  headerSection: {
     paddingHorizontal: 24,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 10,
-  },
-  headerLeft: {
-    flexDirection: 'row',
+    paddingBottom: 40,
     alignItems: 'center',
     gap: 16,
-    flex: 1,
   },
-  greetingContainer: {
-    flex: 1,
+  logoContainer: {
+    marginBottom: 8,
   },
-  profileButton: {
+  userInfo: {
     alignItems: 'center',
-  },
-  profilePicture: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  profileInitial: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: 'bold',
+    gap: 4,
   },
   greeting: {
     fontSize: 16,
-    color: 'black',
+    color: 'white',
     opacity: 0.9,
     fontWeight: '500',
   },
   userName: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
-    color: 'black',
-    marginTop: 4,
+    color: 'white',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
   userRole: {
     fontSize: 14,
-    color: 'black',
+    color: 'white',
     opacity: 0.8,
-    marginTop: 2,
     fontWeight: '500',
   },
-  content: {
-    padding: 20,
+  currentTime: {
+    fontSize: 18,
+    color: 'white',
+    fontWeight: 'bold',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
-  statsContainer: {
+  blurTransition: {
+    height: 40,
+    marginTop: -20,
+  },
+  blurView: {
+    flex: 1,
+  },
+  whiteContentArea: {
+    backgroundColor: 'white',
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+  },
+  floatingPrayerCard: {
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 24,
+    marginTop: -60,
+    marginBottom: 32,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.1)',
+  },
+  prayerCardHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  prayerHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
-    marginBottom: 24,
+  },
+  prayerCardTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1F2937',
+  },
+  locationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  locationText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  nextPrayerBanner: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#10B981',
+  },
+  nextPrayerLabel: {
+    fontSize: 12,
+    color: '#059669',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  nextPrayerInfo: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: 2,
+  },
+  nextPrayerCountdown: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  prayerTimesList: {
+    gap: 12,
+  },
+  prayerTimeItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    padding: 16,
+    borderRadius: 12,
+  },
+  prayerTimeItemActive: {
+    backgroundColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  prayerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  prayerNameActive: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  prayerTime: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#10B981',
+  },
+  prayerTimeActive: {
+    color: 'white',
+  },
+  unifiedStatsSection: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: 20,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
   },
   statCard: {
-    flex: 1,
-    backgroundColor: 'white',
+    width: (width - 64) / 2,
     borderRadius: 20,
-    padding: 20,
-    alignItems: 'center',
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.1,
     shadowRadius: 16,
     elevation: 8,
-    borderLeftWidth: 4,
   },
-  statNumber: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1E293B',
-    marginVertical: 8,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#64748B',
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  progressSection: {
-    marginBottom: 24,
-  },
-  progressCards: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  progressCard: {
-    flex: 1,
-    borderRadius: 20,
+  statGradient: {
     padding: 20,
     alignItems: 'center',
     gap: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
+    minHeight: 120,
+    justifyContent: 'center',
   },
-  progressTitle: {
-    fontSize: 14,
+  statNumber: {
+    fontSize: 24,
     fontWeight: 'bold',
     color: 'white',
   },
-  progressNumber: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  progressLabel: {
+  statLabel: {
     fontSize: 12,
     color: 'white',
     textAlign: 'center',
-    fontWeight: '500',
+    fontWeight: '600',
     opacity: 0.9,
   },
-  attendanceSection: {
-    marginBottom: 24,
-  },
-  attendanceCards: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  attendanceCard: {
-    flex: 1,
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
-    gap: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 4,
-    borderLeftWidth: 4,
-  },
-  attendanceNumber: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1E293B',
-  },
-  attendanceLabel: {
-    fontSize: 10,
-    color: '#64748B',
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  viewAllAttendanceButton: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    shadowColor: '#3B82F6',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 6,
-  },
-  viewAllAttendanceGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-  },
-  viewAllAttendanceText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   bannerSection: {
-    marginBottom: 24,
+    marginBottom: 32,
   },
   bannerCard: {
     width: width * 0.85,
@@ -883,38 +1103,32 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#CBD5E1',
   },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1E293B',
-    marginBottom: 16,
+  activitySection: {
+    marginBottom: 32,
   },
   activityList: {
     gap: 12,
   },
   activityCard: {
-    borderRadius: 20,
-    overflow: 'hidden',
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
     shadowRadius: 12,
     elevation: 4,
-  },
-  activityGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    gap: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
   },
   activityIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -924,12 +1138,12 @@ const styles = StyleSheet.create({
   activityTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1E293B',
+    color: '#1F2937',
     lineHeight: 20,
   },
   activityDate: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
     fontWeight: '500',
   },
@@ -955,7 +1169,7 @@ const styles = StyleSheet.create({
   },
   emptyActivityText: {
     fontSize: 16,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 16,
     fontWeight: '500',
   },
